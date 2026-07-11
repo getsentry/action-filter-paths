@@ -60,4 +60,4 @@ Commit `dist/` whenever runtime code or dependencies change.
 
 ## Releasing
 
-From a clean, up-to-date `main` checkout, run `scripts/release.sh X.Y.Z`. The script verifies tests and the committed bundle before pushing `vX.Y.Z`. The release workflow verifies it again, publishes a GitHub Release, and advances the `vX` convenience tag only when this is the latest stable semantic version in that major line. Consumers with strict supply-chain requirements should always pin the immutable full commit SHA.
+Run the **Release** workflow from the GitHub Actions tab on `main` and choose a patch, minor, or major version bump. The workflow calculates the next version from the latest stable release tag, verifies tests and the committed bundle, publishes the corresponding GitHub Release, and advances the `vX` convenience tag. Each release requires new commits; dispatching again from an already released commit resumes that release instead of creating a duplicate. With no existing release, the default minor bump publishes `v0.1.0` and creates `v0`. Consumers with strict supply-chain requirements should always pin the immutable full commit SHA.
