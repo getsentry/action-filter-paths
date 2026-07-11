@@ -48,6 +48,12 @@ See [SPEC.md](SPEC.md) for the normative contract and [SECURITY.md](SECURITY.md)
 
 The action intentionally does not call the GitHub API, execute generated shell, accept abbreviated refs, mutate the checkout, or require a token. Its runtime dependencies are bundled into the committed `dist/index.js`; consumers should pin the action to a full commit SHA.
 
+## Compatibility with `dorny/paths-filter`
+
+This action supports the common subset used by repositories such as Junior: inline named picomatch globs, a `"true"` or `"false"` output for each filter, and the JSON `changes` output. Migrating that subset requires a full-history checkout and a pinned action reference; existing filter names and positive glob patterns can remain unchanged.
+
+It is not a drop-in replacement for all `dorny/paths-filter@v3` features. It deliberately omits GitHub API and token use, automatic history fetching, branch or tag refs, alternate working directories, filter configuration files, YAML aliases, change-status predicates, per-filter counts and file lists, and predicate quantifiers. Negative patterns use one unambiguous rule: a path must match any inclusion and no exclusion. This differs from dorny's default `some` quantifier when a filter mixes positive and negative rules.
+
 ## Development
 
 ```sh
