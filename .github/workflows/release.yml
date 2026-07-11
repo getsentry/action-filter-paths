@@ -1,18 +1,26 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump type
+        required: true
+        type: choice
+        default: minor
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: release
 
 jobs:
-  validate:
+  release:
     if: github.repository == 'getsentry/action-filter-paths'
     runs-on: ubuntu-latest
     steps:
@@ -20,44 +28,92 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm run check
-      - name: Validate version tag
-        env:
-          TAG: ${{ github.ref_name }}
+
+      - name: Validate release
         run: |
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "invalid release tag: $TAG" >&2
-            exit 1
-          fi
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "release tag must point to a commit on main" >&2
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "releases must be dispatched from main, not $GITHUB_REF" >&2
             exit 1
           fi
 
-  release:
-    needs: validate
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
+          git fetch origin main --tags
+          if [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]]; then
+            if [[ "$GITHUB_RUN_ATTEMPT" == "1" ]] || ! git tag --points-at "$GITHUB_SHA" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "new releases must use the latest commit on main" >&2
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+              echo "the retried release commit is no longer on main" >&2
+              exit 1
+            fi
+            echo "Retrying a partially published release after main advanced"
+          fi
+
+      - name: Calculate version
+        id: release
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          if [[ "$GITHUB_RUN_ATTEMPT" != "1" ]]; then
+            while IFS= read -r tag; do
+              if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "Reusing $tag already attached to this commit"
+                echo "tag=$tag" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done < <(git tag --points-at "$GITHUB_SHA" --sort=-version:refname)
+          fi
+
+          current="0.0.0"
+          while IFS= read -r tag; do
+            if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              current="${tag#v}"
+              break
+            fi
+          done < <(git tag --list 'v*' --sort=-version:refname)
+
+          IFS=. read -r major minor patch <<< "$current"
+          case "$BUMP" in
+            major) version="$((major + 1)).0.0" ;;
+            minor) version="$major.$((minor + 1)).0" ;;
+            patch) version="$major.$minor.$((patch + 1))" ;;
+          esac
+
+          tag="v$version"
+          if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists on another commit" >&2
+            exit 1
+          fi
+          echo "Bumping $current to $version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+      - run: npm run check
+
       - name: Publish GitHub release
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "$TAG is already published"
+          elif git rev-parse --verify --quiet "refs/tags/$TAG" >/dev/null; then
+            gh release create "$TAG" --verify-tag --generate-notes --title "$TAG"
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --generate-notes --title "$TAG"
           fi
+
       - name: Advance major tag
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           major="${TAG%%.*}"
           latest="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' | grep -E "^${major}\.[0-9]+\.[0-9]+$" | sort -V | tail -1)"

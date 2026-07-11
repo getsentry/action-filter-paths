@@ -9,7 +9,71 @@ import YAML from "yaml";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workflow = YAML.parse(fs.readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8"));
+const validateRelease = workflow.jobs.release.steps.find((step) => step.name === "Validate release").run;
+const calculateVersion = workflow.jobs.release.steps.find((step) => step.name === "Calculate version").run;
 const advanceMajor = workflow.jobs.release.steps.find((step) => step.name === "Advance major tag").run;
+
+function calculate(bump, tags = [], currentTags = [], attempt = "1") {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "release-version-"));
+  const output = path.join(directory, "output");
+  execFileSync("git", ["init", "--initial-branch=main", directory]);
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: directory });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: directory });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: directory });
+  execFileSync("git", ["config", "tag.gpgsign", "false"], { cwd: directory });
+  fs.writeFileSync(path.join(directory, "fixture"), "previous");
+  execFileSync("git", ["add", "fixture"], { cwd: directory });
+  execFileSync("git", ["commit", "-m", "previous"], { cwd: directory });
+  for (const tag of tags) execFileSync("git", ["tag", tag], { cwd: directory });
+  fs.writeFileSync(path.join(directory, "fixture"), "current");
+  execFileSync("git", ["commit", "-am", "current"], { cwd: directory });
+  for (const tag of currentTags) execFileSync("git", ["tag", tag], { cwd: directory });
+  const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: directory, encoding: "utf8" }).trim();
+  execFileSync("bash", ["-euo", "pipefail", "-c", calculateVersion], {
+    cwd: directory,
+    env: {
+      ...process.env,
+      BUMP: bump,
+      GITHUB_OUTPUT: output,
+      GITHUB_RUN_ATTEMPT: attempt,
+      GITHUB_SHA: sha
+    }
+  });
+  return fs.readFileSync(output, "utf8").trim();
+}
+
+function validateAfterMainAdvances(attempt, { tag = true } = {}) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "release-validation-"));
+  const remote = path.join(directory, "remote.git");
+  const checkout = path.join(directory, "checkout");
+  execFileSync("git", ["init", "--bare", remote]);
+  execFileSync("git", ["init", "--initial-branch=main", checkout]);
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: checkout });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: checkout });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: checkout });
+  execFileSync("git", ["config", "tag.gpgsign", "false"], { cwd: checkout });
+  execFileSync("git", ["remote", "add", "origin", remote], { cwd: checkout });
+  fs.writeFileSync(path.join(checkout, "fixture"), "release");
+  execFileSync("git", ["add", "fixture"], { cwd: checkout });
+  execFileSync("git", ["commit", "-m", "release"], { cwd: checkout });
+  const releaseSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8" }).trim();
+  if (tag) execFileSync("git", ["tag", "v0.1.0"], { cwd: checkout });
+  execFileSync("git", ["push", "--set-upstream", "origin", "main", "--tags"], { cwd: checkout });
+  fs.writeFileSync(path.join(checkout, "fixture"), "later");
+  execFileSync("git", ["commit", "-am", "later"], { cwd: checkout });
+  execFileSync("git", ["push", "origin", "main"], { cwd: checkout });
+  execFileSync("git", ["checkout", "--detach", releaseSha], { cwd: checkout });
+  return () =>
+    execFileSync("bash", ["-euo", "pipefail", "-c", validateRelease], {
+      cwd: checkout,
+      env: {
+        ...process.env,
+        GITHUB_REF: "refs/heads/main",
+        GITHUB_RUN_ATTEMPT: attempt,
+        GITHUB_SHA: releaseSha
+      }
+    });
+}
 
 function runCase(tag, releases, { existingMajor = false } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "release-workflow-"));
@@ -67,4 +131,19 @@ test("major tag advances only for the latest release in its major line", () => {
   assert.deepEqual(runCase("v1.2.0", ["v1.2.0", "v2.0.0"], { existingMajor: true }), [
     ["api", "--method", "PATCH", "repos/getsentry/action-filter-paths/git/refs/tags/v1", "-f", `sha=${sha}`, "-F", "force=true"]
   ]);
+});
+
+test("release versions are bumped from stable tags and can be retried", () => {
+  assert.equal(calculate("minor"), "tag=v0.1.0");
+  assert.equal(calculate("patch", ["v0.1.0", "v0"]), "tag=v0.1.1");
+  assert.equal(calculate("minor", ["v0.1.0", "v0.2.0", "v0"]), "tag=v0.3.0");
+  assert.equal(calculate("major", ["v0.9.0", "v0"]), "tag=v1.0.0");
+  assert.equal(calculate("minor", ["v0.1.0"], ["v0.2.0", "v0"]), "tag=v0.3.0");
+  assert.equal(calculate("minor", ["v0.1.0"], ["v0.2.0", "v0"], "2"), "tag=v0.2.0");
+});
+
+test("only a tagged rerun may finish after main advances", () => {
+  assert.throws(validateAfterMainAdvances("1"));
+  assert.throws(validateAfterMainAdvances("2", { tag: false }));
+  assert.doesNotThrow(validateAfterMainAdvances("2"));
 });
