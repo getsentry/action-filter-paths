@@ -60,4 +60,4 @@ Commit `dist/` whenever runtime code or dependencies change.
 
 ## Releasing
 
-From a clean, up-to-date `main` checkout, run `scripts/release.sh X.Y.Z`. The script verifies tests and the committed bundle before pushing `vX.Y.Z`. The release workflow verifies it again, publishes a GitHub Release, and advances the `vX` convenience tag. Consumers with strict supply-chain requirements should always pin the immutable full commit SHA.
+From a clean, up-to-date `main` checkout, run `scripts/release.sh X.Y.Z`. The script verifies tests and the committed bundle before pushing `vX.Y.Z`. The release workflow verifies it again, publishes a GitHub Release, and advances the `vX` convenience tag only when this is the latest stable semantic version in that major line. Consumers with strict supply-chain requirements should always pin the immutable full commit SHA.
