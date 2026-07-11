@@ -63,6 +63,7 @@ function validateAfterMainAdvances(attempt, { tag = true } = {}) {
   execFileSync("git", ["commit", "-am", "later"], { cwd: checkout });
   execFileSync("git", ["push", "origin", "main"], { cwd: checkout });
   execFileSync("git", ["checkout", "--detach", releaseSha], { cwd: checkout });
+  execFileSync("git", ["remote", "set-url", "origin", path.join(directory, "unreachable.git")], { cwd: checkout });
   return () =>
     execFileSync("bash", ["-euo", "pipefail", "-c", validateRelease], {
       cwd: checkout,
