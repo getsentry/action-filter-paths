@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-test("bundled action filters real pull request and push diffs", () => {
+test("bundled action filters pull requests and enables all filters otherwise", () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "action-filter-paths-"));
   const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
   git("init", "--quiet");
@@ -32,6 +32,7 @@ test("bundled action filters real pull request and push diffs", () => {
     cwd: repo,
     env: {
       ...process.env,
+      GITHUB_EVENT_NAME: "pull_request",
       GITHUB_EVENT_PATH: eventPath,
       GITHUB_OUTPUT: outputPath,
       INPUT_FILTERS: "docs: 'docs/**'\nsource: 'src/**'"
@@ -47,60 +48,20 @@ test("bundled action filters real pull request and push diffs", () => {
   }
   assert.deepEqual(outputs, { docs: "true", source: "false", changes: '["docs"]' });
 
-  fs.writeFileSync(eventPath, JSON.stringify({ before: base, after: head }));
-  fs.writeFileSync(outputPath, "");
-  execFileSync(process.execPath, [path.join(root, "dist", "index.js")], {
-    cwd: repo,
-    env: {
-      ...process.env,
-      GITHUB_EVENT_PATH: eventPath,
-      GITHUB_OUTPUT: outputPath,
-      INPUT_FILTERS: "docs: 'docs/**'"
-    }
-  });
-  assert.match(fs.readFileSync(outputPath, "utf8"), /\ntrue\n/);
-
-  fs.writeFileSync(eventPath, JSON.stringify({ before: "0".repeat(40), after: head }));
-  fs.writeFileSync(outputPath, "");
-  execFileSync(process.execPath, [path.join(root, "dist", "index.js")], {
-    cwd: repo,
-    env: {
-      ...process.env,
-      GITHUB_EVENT_PATH: eventPath,
-      GITHUB_OUTPUT: outputPath,
-      INPUT_FILTERS: "docs: 'docs/**'\nsource: 'src/**'"
-    }
-  });
-  const created = fs.readFileSync(outputPath, "utf8");
-  assert.match(created, /docs<<[^\n]+\ntrue\n/);
-  assert.match(created, /source<<[^\n]+\nfalse\n/);
-  assert.match(created, /changes<<[^\n]+\n\["docs"\]\n/);
-
-  fs.writeFileSync(eventPath, JSON.stringify({ before: head, after: "0".repeat(40) }));
-  fs.writeFileSync(outputPath, "");
-  execFileSync(process.execPath, [path.join(root, "dist", "index.js")], {
-    cwd: repo,
-    env: {
-      ...process.env,
-      GITHUB_EVENT_PATH: eventPath,
-      GITHUB_OUTPUT: outputPath,
-      INPUT_FILTERS: "docs: 'docs/**'"
-    }
-  });
-  assert.match(fs.readFileSync(outputPath, "utf8"), /docs<<[^\n]+\ntrue\n/);
-
   fs.writeFileSync(eventPath, JSON.stringify({ before: head, after: head }));
   fs.writeFileSync(outputPath, "");
   execFileSync(process.execPath, [path.join(root, "dist", "index.js")], {
     cwd: repo,
     env: {
       ...process.env,
+      GITHUB_EVENT_NAME: "push",
       GITHUB_EVENT_PATH: eventPath,
       GITHUB_OUTPUT: outputPath,
-      INPUT_FILTERS: "docs: 'docs/**'",
-      INPUT_BASE: base,
-      INPUT_HEAD: head
+      INPUT_FILTERS: "docs: 'docs/**'\nsource: 'src/**'"
     }
   });
-  assert.match(fs.readFileSync(outputPath, "utf8"), /docs<<[^\n]+\ntrue\n/);
+  const pushed = fs.readFileSync(outputPath, "utf8");
+  assert.match(pushed, /docs<<[^\n]+\ntrue\n/);
+  assert.match(pushed, /source<<[^\n]+\ntrue\n/);
+  assert.match(pushed, /changes<<[^\n]+\n\["docs","source"\]\n/);
 });

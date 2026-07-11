@@ -30,7 +30,7 @@ test("passes a fixed argument vector to git and reads NUL-delimited paths", () =
     invocation = args;
     return { status: 0, stdout: Buffer.from("a file\0line\nname\0"), stderr: Buffer.alloc(0) };
   };
-  const paths = changedPaths("a".repeat(40), "b".repeat(40), { pullRequest: true, run });
+  const paths = changedPaths("a".repeat(40), "b".repeat(40), { run });
   assert.deepEqual(paths, ["a file", "line\nname"]);
   assert.deepEqual(invocation[1], [
     "diff",

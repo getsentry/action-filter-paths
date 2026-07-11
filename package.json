@@ -8,7 +8,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "ncc build src/index.js --minify",
-    "check": "npm run test && npm run build && git diff --exit-code -- dist",
+    "check": "npm run build && npm test && git diff --exit-code -- dist",
     "test": "node --test"
   },
   "dependencies": {

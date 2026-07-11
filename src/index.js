@@ -9,23 +9,29 @@ function event() {
   return JSON.parse(fs.readFileSync(path, "utf8"));
 }
 
-function resolveRange(payload, baseInput, headInput) {
-  const pullRequest = Boolean(payload.pull_request);
-  const base = baseInput || payload.pull_request?.base?.sha || payload.before;
-  const head = headInput || payload.pull_request?.head?.sha || payload.after;
-  return { base: assertSha("base", base), head: assertSha("head", head), pullRequest };
-}
-
 function run() {
   try {
     const filters = parseFilters(core.getInput("filters", { required: true }));
-    const range = resolveRange(event(), core.getInput("base"), core.getInput("head"));
-    const paths = changedPaths(range.base, range.head, { pullRequest: range.pullRequest });
-    const results = matchFilters(filters, paths);
+    const pullRequest = process.env.GITHUB_EVENT_NAME === "pull_request";
+    let paths = [];
+    let results;
+    if (pullRequest) {
+      const payload = event();
+      const base = assertSha("pull request base", payload.pull_request?.base?.sha);
+      const head = assertSha("pull request head", payload.pull_request?.head?.sha);
+      paths = changedPaths(base, head);
+      results = matchFilters(filters, paths);
+    } else {
+      results = filters.map(({ name }) => ({ name, matched: true }));
+    }
     const changes = results.filter(({ matched }) => matched).map(({ name }) => name);
     for (const { name, matched } of results) core.setOutput(name, String(matched));
     core.setOutput("changes", JSON.stringify(changes));
-    core.info(`Matched ${changes.length} of ${results.length} filters across ${paths.length} changed paths`);
+    core.info(
+      pullRequest
+        ? `Matched ${changes.length} of ${results.length} filters across ${paths.length} changed paths`
+        : `Enabled all ${results.length} filters for non-pull-request event`
+    );
   } catch (error) {
     core.setFailed(error instanceof Error ? error.message : String(error));
   }

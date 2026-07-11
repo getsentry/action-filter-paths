@@ -9,10 +9,8 @@ export function assertSha(name, value) {
   return value;
 }
 
-export function changedPaths(base, head, { pullRequest = false, run = spawnSync } = {}) {
-  if (!pullRequest && /^0+$/.test(base)) base = emptyTree(run);
-  if (!pullRequest && /^0+$/.test(head)) head = emptyTree(run);
-  const range = pullRequest ? `${base}...${head}` : `${base}..${head}`;
+export function changedPaths(base, head, { run = spawnSync } = {}) {
+  const range = `${base}...${head}`;
   const result = run("git", [
     "diff",
     "--no-ext-diff",
@@ -45,17 +43,4 @@ export function changedPaths(base, head, { pullRequest = false, run = spawnSync 
     throw new Error(`git diff returned more than ${MAX_CHANGED_PATHS} changed paths`);
   }
   return paths;
-}
-
-function emptyTree(run) {
-  const result = run("git", ["hash-object", "-t", "tree", "--stdin"], {
-    input: Buffer.alloc(0),
-    encoding: "utf8",
-    timeout: 10_000,
-    windowsHide: true
-  });
-  if (result.error || result.status !== 0 || !FULL_SHA.test(result.stdout.trim())) {
-    throw new Error("git failed to resolve the empty tree for a create or delete push");
-  }
-  return result.stdout.trim();
 }

@@ -5,12 +5,6 @@ inputs:
   filters:
     description: YAML mapping of output names to one or more glob patterns
     required: true
-  base:
-    description: Full base commit SHA; inferred from pull_request or push events by default
-    required: false
-  head:
-    description: Full head commit SHA; inferred from pull_request or push events by default
-    required: false
 outputs:
   changes:
     description: JSON array containing the names of filters that matched

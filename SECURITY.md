@@ -2,7 +2,7 @@
 
 ## Threat model
 
-On pull requests, filenames and repository contents may be attacker-controlled. Filter configuration and workflow code are trusted because GitHub executes the base repository's workflow for ordinary fork pull requests. The action therefore treats valid UTF-8 paths as data and never evaluates them as shell, expressions, YAML, or command options. Non-UTF-8 paths fail closed.
+On pull requests, filenames and repository contents may be attacker-controlled. Filter configuration and workflow code are trusted because GitHub executes the base repository's workflow for ordinary fork pull requests. The action therefore treats valid UTF-8 paths as data and never evaluates them as shell, expressions, YAML, or command options. Non-UTF-8 paths fail closed. Non-PR events do not inspect changed paths and conservatively enable every filter.
 
 Controls include full-SHA validation, direct process spawning, a fixed Git argument vector, NUL-delimited output, bounded configuration and subprocess output, a timeout, disabled YAML aliases, no network/API access, no credential requirement, and fail-closed errors. Dependency versions are exact and the distributable is committed for review.
 
