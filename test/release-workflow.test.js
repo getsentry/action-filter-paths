@@ -11,9 +11,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workflow = YAML.parse(fs.readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8"));
 const validateRelease = workflow.jobs.release.steps.find((step) => step.name === "Validate release").run;
 const calculateVersion = workflow.jobs.release.steps.find((step) => step.name === "Calculate version").run;
+const publishRelease = workflow.jobs.release.steps.find((step) => step.name === "Publish GitHub release").run;
 const advanceMajor = workflow.jobs.release.steps.find((step) => step.name === "Advance major tag").run;
 
-function calculate(bump, tags = [], currentTags = [], attempt = "1") {
+function calculate(bump, tags = [], currentTags = []) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "release-version-"));
   const output = path.join(directory, "output");
   execFileSync("git", ["init", "--initial-branch=main", directory]);
@@ -35,7 +36,6 @@ function calculate(bump, tags = [], currentTags = [], attempt = "1") {
       ...process.env,
       BUMP: bump,
       GITHUB_OUTPUT: output,
-      GITHUB_RUN_ATTEMPT: attempt,
       GITHUB_SHA: sha
     }
   });
@@ -73,6 +73,43 @@ function validateAfterMainAdvances(attempt, { tag = true } = {}) {
         GITHUB_SHA: releaseSha
       }
     });
+}
+
+function publish(tag, { existingTag = false } = {}) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "release-publish-"));
+  const calls = path.join(directory, "calls");
+  const gh = path.join(directory, "gh");
+  execFileSync("git", ["init", "--initial-branch=main", directory]);
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: directory });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: directory });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: directory });
+  execFileSync("git", ["config", "tag.gpgsign", "false"], { cwd: directory });
+  fs.writeFileSync(path.join(directory, "fixture"), "release");
+  execFileSync("git", ["add", "fixture"], { cwd: directory });
+  execFileSync("git", ["commit", "-m", "release"], { cwd: directory });
+  if (existingTag) execFileSync("git", ["tag", tag], { cwd: directory });
+  const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: directory, encoding: "utf8" }).trim();
+  fs.writeFileSync(
+    gh,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] === "release" && args[1] === "view") process.exit(1);
+fs.writeFileSync(process.env.MOCK_CALLS, JSON.stringify(args));
+`
+  );
+  fs.chmodSync(gh, 0o755);
+  execFileSync("bash", ["-euo", "pipefail", "-c", publishRelease], {
+    cwd: directory,
+    env: {
+      ...process.env,
+      GITHUB_SHA: sha,
+      MOCK_CALLS: calls,
+      PATH: `${directory}:${process.env.PATH}`,
+      TAG: tag
+    }
+  });
+  return { args: JSON.parse(fs.readFileSync(calls, "utf8")), sha };
 }
 
 function runCase(tag, releases, { existingMajor = false } = {}) {
@@ -138,8 +175,32 @@ test("release versions are bumped from stable tags and can be retried", () => {
   assert.equal(calculate("patch", ["v0.1.0", "v0"]), "tag=v0.1.1");
   assert.equal(calculate("minor", ["v0.1.0", "v0.2.0", "v0"]), "tag=v0.3.0");
   assert.equal(calculate("major", ["v0.9.0", "v0"]), "tag=v1.0.0");
-  assert.equal(calculate("minor", ["v0.1.0"], ["v0.2.0", "v0"]), "tag=v0.3.0");
-  assert.equal(calculate("minor", ["v0.1.0"], ["v0.2.0", "v0"], "2"), "tag=v0.2.0");
+  assert.equal(calculate("minor", ["v0.1.0"], ["v0.2.0", "v0"]), "tag=v0.2.0");
+});
+
+test("release creation requires new commits", () => {
+  const created = publish("v0.2.0");
+  assert.deepEqual(created.args, [
+    "release",
+    "create",
+    "v0.2.0",
+    "--target",
+    created.sha,
+    "--fail-on-no-commits",
+    "--generate-notes",
+    "--title",
+    "v0.2.0"
+  ]);
+  assert.deepEqual(publish("v0.2.0", { existingTag: true }).args, [
+    "release",
+    "create",
+    "v0.2.0",
+    "--verify-tag",
+    "--fail-on-no-commits",
+    "--generate-notes",
+    "--title",
+    "v0.2.0"
+  ]);
 });
 
 test("only a tagged rerun may finish after main advances", () => {
